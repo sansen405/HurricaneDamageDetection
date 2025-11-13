@@ -11,4 +11,17 @@
 !requirements.txt
 !requirements.py
 
+# Re-ignore heavy model binaries even inside artifacts
+artifacts/**/*.keras
+artifacts/**/*.h5
+artifacts/**/*.ckpt
+artifacts/**/checkpoint
+
+# Allow the primary model file
+!artifacts/best_model.keras
+
+# Never track any top-level or nested models directory
+models/
+**/models/
+
 
