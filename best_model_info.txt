@@ -1,0 +1,3 @@
+Best Model: Alternate LeNet-5
+Test Accuracy: 0.9304
+Test Loss: 0.1739
