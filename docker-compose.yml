@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   inference-server:
     image: ssenthil99/inference-server:latest

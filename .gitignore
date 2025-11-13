@@ -10,6 +10,11 @@
 !inference_server.py
 !requirements.txt
 !requirements.py
+!README.md
+!grader.py
+!start_grader.sh
+!data/
+!data/**
 
 # Re-ignore heavy model binaries even inside artifacts
 artifacts/**/*.keras
