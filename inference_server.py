@@ -52,6 +52,11 @@ print(f"✓ Loaded model: {card.get('best_model_name', 'Unknown')}")
 print(f"✓ Test AUC: {card.get('test_auc', 'N/A')}")
 print(f"✓ Input size: {W}x{H}, Scale: {SCALE}")
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check endpoint"""
+    return jsonify({"status": "ok"})
+
 @app.route("/summary", methods=["GET"])
 def summary():
     """Return model metadata"""
@@ -89,7 +94,7 @@ def inference():
         
         # Predict
         prob = float(model.predict(x, verbose=0).ravel()[0])
-        label = "damage" if prob >= 0.5 else "no_damage"
+        label = "no_damage" if prob >= 0.5 else "damage"
         
         # Return exact format required by grader
         return jsonify({"prediction": label})
