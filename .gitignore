@@ -1,31 +1,14 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Ignore everything by default
+*
 
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
+# But keep these:
+!.gitignore
+!artifacts/
+!artifacts/**
+!docker-compose.yml
+!Dockerfile
+!inference_server.py
+!requirements.txt
+!requirements.py
 
-# Data files (too large for git)
-data/
-
-# Model files - exclude large ones, only keep artifacts/best_model.keras
-models/*.keras
-*.keras
-!artifacts/best_model.keras
-
-# Results/images (not needed for deployment)
-results/
-images/
-
-# OS
-.DS_Store
-*.zip
-
-# IDE
-.vscode/
-.idea/
 

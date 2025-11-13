@@ -1,107 +1,142 @@
 import os
+import io
+import json
+from typing import Dict, Tuple, Any
 
-# Set environment variable before any TF imports
-# os.environ['TF_USE_LEGACY_KERAS'] = '1'
-
+import numpy as np
 from flask import Flask, request, jsonify
 from PIL import Image
-import io, json, numpy as np
 
-# Use tf_keras instead of keras if using TF 2.14+
+# Prefer tf_keras on environments where it is available (e.g., TF 2.14+),
+# otherwise fall back to tensorflow.keras.
 try:
     import tf_keras as keras
 except ImportError:
     from tensorflow import keras
 
-# === Paths ===
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-ART_DIR = os.path.join(APP_DIR, "artifacts")
-MODEL_PATH = os.path.join(ART_DIR, "best_model.keras")
-PREP_PATH = os.path.join(ART_DIR, "preprocessing.json")
-CARD_PATH = os.path.join(ART_DIR, "model_card.json")
 
-app = Flask(__name__)
+# ---------- Filesystem utilities ----------
+def _default_paths() -> Dict[str, str]:
+    app_directory = os.path.dirname(os.path.abspath(__file__))
+    artifacts_directory = os.path.join(app_directory, "artifacts")
+    return {
+        "APP_DIR": app_directory,
+        "ARTIFACTS_DIR": artifacts_directory,
+        "MODEL_FILE_PATH": os.getenv("MODEL_PATH", os.path.join(artifacts_directory, "best_model.keras")),
+        "PREPROCESS_CONFIG_PATH": os.getenv("PREP_PATH", os.path.join(artifacts_directory, "preprocessing.json")),
+        "MODEL_CARD_PATH": os.getenv("CARD_PATH", os.path.join(artifacts_directory, "model_card.json")),
+    }
 
-# === Startup validation ===
-print("=== STARTUP ===")
-print(f"APP_DIR: {APP_DIR}")
-print(f"ART_DIR: {ART_DIR}")
-print(f"SavedModel present?: {os.path.exists(MODEL_PATH)}")
-print(f"PREP present?: {os.path.exists(PREP_PATH)}")
 
-if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(f"Missing model at {MODEL_PATH}")
-
-if not os.path.exists(PREP_PATH):
-    raise FileNotFoundError(f"Missing preprocessing.json at {PREP_PATH}")
-
-# === Load model and config ===
-print(f"Loading model from: {MODEL_PATH}")
-model = keras.models.load_model(MODEL_PATH)
-
-with open(PREP_PATH, "r") as f:
-    prep = json.load(f)
-
-W, H = prep["img_size"]
-SCALE = prep["scale"]
-
-try:
-    with open(CARD_PATH, "r") as f:
-        card = json.load(f)
-except FileNotFoundError:
-    card = {"best_model_name": "Unknown", "test_auc": None}
-
-print(f"✓ Loaded model: {card.get('best_model_name', 'Unknown')}")
-print(f"✓ Test AUC: {card.get('test_auc', 'N/A')}")
-print(f"✓ Input size: {W}x{H}, Scale: {SCALE}")
-
-@app.route("/summary", methods=["GET"])
-def summary():
-    """Return model metadata"""
-    return jsonify({
-        "model_name": card.get("best_model_name", "Unknown"),
-        "test_auc": card.get("test_auc"),
-        "input_size": [W, H, 3],
-        "classes": ["no_damage", "damage"],
-        "preprocessing": {
-            "resize": [W, H],
-            "scale": SCALE
-        }
-    })
-
-@app.route("/inference", methods=["POST"])
-def inference():
-    """Perform inference on uploaded image"""
-    
-    # Handle multipart form data (grader format)
-    if 'image' in request.files:
-        file = request.files['image']
-        raw = file.read()
-    # Handle raw binary data (alternative format)
-    else:
-        raw = request.get_data()
-    
-    if not raw:
-        return jsonify({"error": "Empty request body"}), 400
-    
+def _load_json(path: str, default: Dict[str, Any] | None = None) -> Dict[str, Any]:
     try:
-        # Load and preprocess
-        im = Image.open(io.BytesIO(raw)).convert("RGB").resize((W, H))
-        x = np.asarray(im, dtype=np.float32) * float(SCALE)
-        x = x[None, ...]  # (1, H, W, 3)
-        
-        # Predict
-        prob = float(model.predict(x, verbose=0).ravel()[0])
-        label = "damage" if prob >= 0.5 else "no_damage"
-        
-        # Return exact format required by grader
-        return jsonify({"prediction": label})
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        with open(path, "r") as handle:
+            return json.load(handle)
+    except FileNotFoundError:
+        return {} if default is None else default
+
+
+# ---------- Model and preprocessing ----------
+def load_artifacts() -> Tuple[keras.Model, Dict[str, Any], Dict[str, Any], Dict[str, str]]:
+    paths = _default_paths()
+
+    print("=== STARTUP ===")
+    print(f"APP_DIR: {paths['APP_DIR']}")
+    print(f"ARTIFACTS_DIR: {paths['ARTIFACTS_DIR']}")
+    print(f"MODEL_FILE_PATH: {paths['MODEL_FILE_PATH']}")
+    print(f"PREPROCESS_CONFIG_PATH: {paths['PREPROCESS_CONFIG_PATH']}")
+    print(f"MODEL_CARD_PATH: {paths['MODEL_CARD_PATH']}")
+
+    if not os.path.exists(paths["MODEL_FILE_PATH"]):
+        raise FileNotFoundError(f"Missing model at {paths['MODEL_FILE_PATH']}")
+    if not os.path.exists(paths["PREPROCESS_CONFIG_PATH"]):
+        raise FileNotFoundError(f"Missing preprocessing.json at {paths['PREPROCESS_CONFIG_PATH']}")
+
+    print(f"Loading model from: {paths['MODEL_FILE_PATH']}")
+    model = keras.models.load_model(paths["MODEL_FILE_PATH"])
+
+    prep_cfg = _load_json(paths["PREPROCESS_CONFIG_PATH"])
+    if "img_size" not in prep_cfg or "scale" not in prep_cfg:
+        raise ValueError("preprocessing.json must contain 'img_size' and 'scale'")
+
+    card = _load_json(paths["MODEL_CARD_PATH"], default={"best_model_name": "Unknown", "test_auc": None})
+
+    input_width, input_height = prep_cfg["img_size"]
+    input_scale = prep_cfg["scale"]
+    print(f"✓ Loaded model: {card.get('best_model_name', 'Unknown')}")
+    print(f"✓ Test AUC: {card.get('test_auc', 'N/A')}")
+    print(f"✓ Input size: {input_width}x{input_height}, Scale: {input_scale}")
+
+    return model, prep_cfg, card, paths
+
+
+def preprocess_bytes(raw_bytes: bytes, width: int, height: int, scale: float) -> np.ndarray:
+    image = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((width, height))
+    array = np.asarray(image, dtype=np.float32) * float(scale)
+    return array[None, ...]  # (1, H, W, 3)
+
+
+def predict_label_from_array(model: keras.Model, batch: np.ndarray) -> str:
+    prob = float(model.predict(batch, verbose=0).ravel()[0])
+    return "damage" if prob >= 0.5 else "no_damage"
+
+
+def get_request_image_bytes() -> bytes:
+    if "image" in request.files:
+        uploaded = request.files["image"]
+        return uploaded.read()
+    return request.get_data()
+
+
+# ---------- Flask app factory ----------
+def create_app() -> Flask:
+    app = Flask(__name__)
+
+    model, prep_cfg, card, paths = load_artifacts()
+    app.config["MODEL"] = model
+    app.config["PREP"] = prep_cfg
+    app.config["CARD"] = card
+    app.config["PATHS"] = paths
+
+    @app.route("/health", methods=["GET"])
+    def health() -> Any:
+        return jsonify({"status": "ok"})
+
+    @app.route("/summary", methods=["GET"])
+    def summary() -> Any:
+        input_width, input_height = app.config["PREP"]["img_size"]
+        input_scale = app.config["PREP"]["scale"]
+        meta = {
+            "model_name": app.config["CARD"].get("best_model_name", "Unknown"),
+            "test_auc": app.config["CARD"].get("test_auc"),
+            "input_size": [input_width, input_height, 3],
+            "classes": ["no_damage", "damage"],
+            "preprocessing": {"resize": [input_width, input_height], "scale": input_scale},
+        }
+        return jsonify(meta)
+
+    @app.route("/inference", methods=["POST"])
+    def inference() -> Any:
+        raw = get_request_image_bytes()
+        if not raw:
+            return jsonify({"error": "Empty request body"}), 400
+
+        try:
+            input_width, input_height = app.config["PREP"]["img_size"]
+            input_scale = app.config["PREP"]["scale"]
+            batch = preprocess_bytes(raw, input_width, input_height, input_scale)
+            label = predict_label_from_array(app.config["MODEL"], batch)
+            return jsonify({"prediction": label})
+        except Exception as exc:
+            # Intentionally return error as JSON for easier debugging.
+            return jsonify({"error": str(exc)}), 500
+
+    return app
+
+
+# Create the application when the module is imported so gunicorn/uwsgi can use it.
+app = create_app()
 
 if __name__ == "__main__":
+    # Bind to 0.0.0.0:5000 to satisfy the grader/container requirements.
     app.run(host="0.0.0.0", port=5000, debug=False)
-
